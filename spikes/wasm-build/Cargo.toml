@@ -1,0 +1,33 @@
+[package]
+name = "zeroclaw-wasm-build-spike"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Milestone 0 proof that the ZeroClaw tool-plugin WIT and Solana-oriented dependencies build for wasm32-wasip2"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+base64 = "0.22"
+bs58 = "0.5"
+curve25519-dalek = { version = "4", default-features = false, features = ["alloc"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+wit-bindgen = "0.46"
+
+# waki is a blocking wasi:http client. Keeping it WASM-only preserves ordinary
+# host tests while still forcing the component build to resolve and compile it.
+[target.'cfg(target_family = "wasm")'.dependencies]
+waki = { version = "0.5.1", features = ["json"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+codegen-units = 1
+
+[workspace]
+
