@@ -1,0 +1,3 @@
+[submodule "zeroclaw-plugins"]
+	path = zeroclaw-plugins
+	url = https://github.com/zeroclaw-labs/zeroclaw-plugins.git
