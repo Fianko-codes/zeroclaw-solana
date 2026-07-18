@@ -10,9 +10,13 @@
 pub mod amount;
 pub mod compact_u16;
 pub mod error;
+pub mod inspect;
 pub mod instruction;
 pub mod message;
+pub mod mint;
 pub mod pubkey;
+pub mod reference;
+pub mod rpc;
 pub mod shape;
 
 pub use error::Error;
