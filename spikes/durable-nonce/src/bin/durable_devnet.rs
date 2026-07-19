@@ -75,9 +75,13 @@ fn cmd_build(args: &[String]) {
     let nonce_value = b58_hash(&args[2]);
     let recipient = b58(&args[3]);
     let lamports: u64 = args[4].parse().expect("lamports u64");
+    // Optional 6th arg: override the AdvanceNonceAccount authority (to exercise
+    // the runtime's wrong-authority rejection under simulation). Defaults to the
+    // sender, which is the only arrangement M4 supports.
+    let authority = args.get(5).map(|a| b58(a)).unwrap_or(sender);
 
     let instructions = vec![
-        advance_nonce_account(nonce_account, sender),
+        advance_nonce_account(nonce_account, authority),
         system_transfer(sender, recipient, lamports),
     ];
     let message = Message::compile(MessageVersion::V0, sender, nonce_value, &instructions)
@@ -85,8 +89,12 @@ fn cmd_build(args: &[String]) {
     let bytes = Transaction::new_unsigned(message)
         .serialize()
         .expect("serialize unsigned");
-    // Sanity: exactly one all-zero signature slot.
-    assert_eq!(bytes[0], 1, "expected one signature slot");
+    // The M4 arrangement (authority == sender) yields exactly one signature
+    // slot. An authority override is a diagnostic that deliberately adds a
+    // second signer — the very shape M4 forbids — so we only note it.
+    if bytes[0] != 1 {
+        eprintln!("note: {} signature slots (authority override in use)", bytes[0]);
+    }
     println!("{}", STANDARD.encode(&bytes));
 }
 

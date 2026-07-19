@@ -108,25 +108,86 @@ and the verifier separately checks `authority == sender == fee payer`. Proven in
   nonce and charges the fee** (anti-replay/anti-fee-theft). This MUST appear in the
   approval summary and README.
 
-## Simulation configuration (devnet-pending)
+## Simulation configuration — CONFIRMED on devnet
 
-Durable simulation must use `sigVerify=false`, `replaceRecentBlockhash=false`,
+Durable simulation uses `sigVerify=false`, `replaceRecentBlockhash=false`,
 `encoding="base64"`. `sigVerify` and `replaceRecentBlockhash` are mutually
 exclusive; `replaceRecentBlockhash=true` would swap in a fresh cluster blockhash
 and **bypass** the durable-nonce validation, so it must not be used in durable mode.
 
-## Phase-A gate status
+Devnet `simulateTransaction` results against the real nonce account
+`7rtVuvFRhiUCcVHQeiEsqgQAb7UgCEiHWvRdK1qNugjn` (unsigned, `sigVerify=false`,
+`replaceRecentBlockhash=false`):
+
+| Case | Result |
+|---|---|
+| Valid unsigned durable tx | `err: null`, unitsConsumed 300, two `Program 111… success` (AdvanceNonce + Transfer) |
+| Stale/unknown nonce (bogus 32-byte blockhash) | `err: "BlockhashNotFound"` |
+| Wrong nonce authority (authority ≠ stored) | `err: "BlockhashNotFound"` (durable validation fails → normal path fails) |
+| Invalid later instruction (transfer > balance) | `err: {"InstructionError":[1,{"Custom":1}]}`; logs show AdvanceNonce (ix 0) **success**, then Transfer (ix 1) "insufficient lamports" |
+
+The invalid-later-instruction case is the on-chain "nonce validates, later
+instruction fails" scenario: in simulation the nonce is not persisted, but on
+chain this advances the nonce and charges the fee (see approval-summary warning).
+
+## Real devnet nonce account — parser confirmed byte-for-byte
+
+The strict nanosol parser was run (`durable_devnet parse`) on the exact
+`getAccountInfo` base64 of a CLI-created devnet nonce account
+`7rtVuvFRhiUCcVHQeiEsqgQAb7UgCEiHWvRdK1qNugjn`:
+
+- owner `11111111111111111111111111111111` (System Program), executable false, space 80.
+- parsed authority `7Ery7VUPWNmHptzDxWUxP3EXfzwUjLCn7iDp3w94bnbV` == configured sender.
+- parsed durable_nonce `4vMZqWuEMy9gAa5PWaYVWkQhvLKFquKH62fnzfKcvDkN` == `solana nonce`.
+- parsed lamports_per_signature `5000` == CLI "Fee: 5000 lamports per signature".
+
+So the parser matches **both** the official-crate serialization and a real
+devnet-created account.
+
+## Five-minute delayed-signing viability — CONFIRMED on devnet
+
+Disposable resources (session scratchpad only; keys destroyed at end):
+
+| Role | Address |
+|---|---|
+| Sender / fee payer / transfer authority / nonce authority | `7Ery7VUPWNmHptzDxWUxP3EXfzwUjLCn7iDp3w94bnbV` |
+| Nonce account (authority = sender) | `7rtVuvFRhiUCcVHQeiEsqgQAb7UgCEiHWvRdK1qNugjn` |
+| Recipient | `7Cm6Ms2UL53jSd6ir4p615Q6puASpduzz1DuwcaBc8qG` |
+
+Timeline:
+1. Nonce account created (owner = System Program, authority = sender, nonce
+   `4vMZqWuEMy9gAa5PWaYVWkQhvLKFquKH62fnzfKcvDkN`, 5000 lamports/sig).
+2. **T0 = 2026-07-19T01:26:58Z** — built the UNSIGNED durable SOL transfer;
+   captured recent blockhash `9t67jy3baq5SgdsVCh1et3d5F1BQQVFfpV8zBCfdHAbZ`.
+3. Valid durable simulation succeeded (no blockhash replacement).
+4. **Held 379 s (6.3 min).** At T0+256 s the captured recent blockhash was already
+   `isBlockhashValid = false` (a normal recent-blockhash tx from T0 was dead), while
+   the nonce was still current.
+5. Re-read nonce immediately before signing → authority and nonce **unchanged**
+   (`4vMZ…`).
+6. **External** signer (spike `durable_devnet sign`, key never in nanosol/plugin)
+   signed the held message; submitted via `sendTransaction`.
+7. Signature `3fdropMCZm1Yriy1iTupQTQpMcLxrciAC7YtaVGw7AC8k1avFgkjZUX4NK7wDsboCpSRPtNCFPxa5ps2WKoHK1ig`
+   reached **`confirmationStatus: finalized`, `err: null`**.
+8. Recipient balance moved **0 → 0.002 SOL**; nonce **advanced**
+   `4vMZ…` → `9ExdJdLpwALYq2WqBUdXMo8yB8r6hGVc3CocMV2Gfjud`.
+9. Re-simulating the original unsigned tx after the advance → `BlockhashNotFound`
+   (authentic stale-nonce proof: the old nonce is dead once advanced).
+
+## Phase-A gate status — ALL PASS
 
 | # | Condition | Status |
 |---|---|---|
-| 1 | Official nonce-account bytes parsed correctly | **PASS** (`tests/nonce_oracle.rs`) |
+| 1 | Official nonce-account bytes parsed correctly | **PASS** (`tests/nonce_oracle.rs` + real devnet account `7rtVuvF…`) |
 | 2 | Official `AdvanceNonceAccount` bytes match exactly | **PASS** (`tests/nonce_oracle.rs`) |
-| 3 | Runtime account order, signer & writable requirements proven | **PASS** (oracle + `tests/durable_build.rs`) |
-| 4 | Simulation works without blockhash replacement | PENDING — needs a funded devnet nonce account |
-| 5 | Unsigned durable tx survives ≥ 5 min | PENDING — needs devnet SOL |
-| 6 | External signing & submission finalize | PENDING — needs devnet SOL |
-| 7 | Nonce before/after state preserved | PENDING — needs devnet SOL |
+| 3 | Runtime account order, signer & writable requirements proven | **PASS** (oracle + `tests/durable_build.rs` + devnet accepted the tx) |
+| 4 | Simulation works without blockhash replacement | **PASS** (devnet: valid=success, stale/wrong-auth=BlockhashNotFound, later-fail=InstructionError) |
+| 5 | Unsigned durable tx survives ≥ 5 min | **PASS** (379 s; T0 recent blockhash expired by 256 s) |
+| 6 | External signing & submission finalize | **PASS** (finalized, err null) |
+| 7 | Nonce before/after state preserved | **PASS** (unchanged across hold; advanced on execution) |
 | 8 | No production plugin behavior modified yet | **PASS** (only `spikes/durable-nonce/` added) |
+
+**Phase-A verdict: PASS.** Proceed to Phase B.
 
 Spike tests: `cargo +1.96.1 test` in `spikes/durable-nonce/` → 6 passed
 (`nonce_oracle` 4, `durable_build` 2). Devnet driver `durable_devnet`
@@ -134,14 +195,13 @@ Spike tests: `cargo +1.96.1 test` in `spikes/durable-nonce/` → 6 passed
 291-byte single-signature-slot unsigned durable SOL transfer, and the external
 signer produces a valid signature leaving the message bytes unchanged.
 
-### Blocker on conditions 4–7
+### Funding note
 
-`https://api.devnet.solana.com` airdrop returns HTTP 429 "reached your airdrop
-limit today"; the disposable sender could not be funded automatically. Conditions
-4–7 require a funded disposable devnet keypair. A background retry loop continues;
-otherwise the disposable sender address must be funded out-of-band (web faucet or a
-transfer from an existing devnet wallet) to complete Phase A. Private keys never
-enter `nanosol`, the plugin, or committed evidence; the disposable sender key lives
-only in the session scratchpad and is destroyed at the end.
+`https://api.devnet.solana.com` airdrop returned HTTP 429 "reached your airdrop
+limit today", so the disposable sender `7Ery7VUPWNmHptzDxWUxP3EXfzwUjLCn7iDp3w94bnbV`
+could not be auto-funded. It was funded out-of-band (0.5 SOL devnet) to complete
+conditions 4–7. Private keys never enter `nanosol`, the plugin, or committed
+evidence; the disposable sender/nonce keys live only in the session scratchpad and
+are destroyed at the end.
 
-_This file is updated in place once the devnet conditions run._
+_This file is updated in place as the devnet conditions run._
