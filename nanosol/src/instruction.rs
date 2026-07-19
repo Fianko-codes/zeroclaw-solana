@@ -4,9 +4,14 @@ use std::fmt;
 
 use crate::pubkey::{
     derive_associated_token_address, PdaError, Pubkey, ASSOCIATED_TOKEN_PROGRAM_ID,
-    COMPUTE_BUDGET_PROGRAM_ID, LEGACY_TOKEN_PROGRAM_ID, MEMO_V3_PROGRAM_ID, SYSTEM_PROGRAM_ID,
-    TOKEN_2022_PROGRAM_ID,
+    COMPUTE_BUDGET_PROGRAM_ID, LEGACY_TOKEN_PROGRAM_ID, MEMO_V3_PROGRAM_ID,
+    RECENT_BLOCKHASHES_SYSVAR_ID, SYSTEM_PROGRAM_ID, TOKEN_2022_PROGRAM_ID,
 };
+
+/// `SystemInstruction::AdvanceNonceAccount` bincode encoding: the enum
+/// discriminant `4` as a little-endian `u32`, with no payload. Confirmed
+/// byte-for-byte against `solana-system-interface`.
+pub const ADVANCE_NONCE_ACCOUNT_DATA: [u8; 4] = [4, 0, 0, 0];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AccountMeta {
@@ -169,5 +174,23 @@ pub fn set_compute_unit_price(micro_lamports: u64) -> Instruction {
         program_id: COMPUTE_BUDGET_PROGRAM_ID,
         accounts: Vec::new(),
         data,
+    }
+}
+
+/// Build the System Program `AdvanceNonceAccount` instruction. Account order and
+/// privileges match `solana_system_interface::instruction::advance_nonce_account`:
+/// `[0]` nonce account (writable, non-signer), `[1]` recent-blockhashes sysvar
+/// (readonly, non-signer), `[2]` nonce authority (readonly signer at the
+/// instruction level). This must be the first instruction of a durable-nonce
+/// transaction, and the message blockhash must equal the stored durable nonce.
+pub fn advance_nonce_account(nonce_account: Pubkey, nonce_authority: Pubkey) -> Instruction {
+    Instruction {
+        program_id: SYSTEM_PROGRAM_ID,
+        accounts: vec![
+            AccountMeta::writable(nonce_account, false),
+            AccountMeta::readonly(RECENT_BLOCKHASHES_SYSVAR_ID, false),
+            AccountMeta::readonly(nonce_authority, true),
+        ],
+        data: ADVANCE_NONCE_ACCOUNT_DATA.to_vec(),
     }
 }

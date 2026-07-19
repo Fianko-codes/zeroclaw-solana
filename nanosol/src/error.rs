@@ -4,7 +4,7 @@ use std::fmt;
 
 use crate::{
     amount::AmountError, compact_u16::CompactU16Error, inspect::InspectError,
-    instruction::InstructionError, message::MessageError, mint::MintError,
+    instruction::InstructionError, message::MessageError, mint::MintError, nonce::NonceError,
     pubkey::ParsePubkeyError, pubkey::PdaError, rpc::RpcError,
 };
 
@@ -18,6 +18,7 @@ pub enum Error {
     Inspect(InspectError),
     Message(MessageError),
     Mint(MintError),
+    Nonce(NonceError),
     Rpc(RpcError),
 }
 
@@ -32,6 +33,7 @@ impl fmt::Display for Error {
             Self::Inspect(error) => error.fmt(formatter),
             Self::Message(error) => error.fmt(formatter),
             Self::Mint(error) => error.fmt(formatter),
+            Self::Nonce(error) => error.fmt(formatter),
             Self::Rpc(error) => error.fmt(formatter),
         }
     }
@@ -57,4 +59,5 @@ impl_from_error!(InstructionError, Instruction);
 impl_from_error!(InspectError, Inspect);
 impl_from_error!(MessageError, Message);
 impl_from_error!(MintError, Mint);
+impl_from_error!(NonceError, Nonce);
 impl_from_error!(RpcError, Rpc);

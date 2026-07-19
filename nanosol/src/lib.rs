@@ -14,6 +14,7 @@ pub mod inspect;
 pub mod instruction;
 pub mod message;
 pub mod mint;
+pub mod nonce;
 pub mod pubkey;
 pub mod reference;
 pub mod rpc;

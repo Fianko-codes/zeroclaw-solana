@@ -3,9 +3,12 @@
 use std::{fmt, str};
 
 use crate::{
-    instruction::{AccountMeta, TokenProgram},
+    instruction::{AccountMeta, TokenProgram, ADVANCE_NONCE_ACCOUNT_DATA},
     message::{Message, MessageError, MessageVersion, Transaction},
-    pubkey::{Pubkey, ASSOCIATED_TOKEN_PROGRAM_ID, MEMO_V3_PROGRAM_ID, SYSTEM_PROGRAM_ID},
+    pubkey::{
+        Pubkey, ASSOCIATED_TOKEN_PROGRAM_ID, MEMO_V3_PROGRAM_ID, RECENT_BLOCKHASHES_SYSVAR_ID,
+        SYSTEM_PROGRAM_ID,
+    },
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,6 +18,12 @@ pub struct DecodedAtaCreateIdempotent {
     pub owner: Pubkey,
     pub mint: Pubkey,
     pub token_program: TokenProgram,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecodedAdvanceNonce {
+    pub nonce_account: Pubkey,
+    pub nonce_authority: Pubkey,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,6 +118,42 @@ pub fn decode_unsigned_v0_transaction(bytes: &[u8]) -> Result<Transaction, Inspe
         return Err(InspectError::NonzeroSignature);
     }
     Ok(transaction)
+}
+
+/// Semantically decode a System Program `AdvanceNonceAccount` instruction and
+/// verify its account count, order, and privileges. Used to require durable-nonce
+/// instruction zero in `verify_final_bytes`.
+///
+/// The nonce authority is checked only for the signer privilege: when (as in M4)
+/// the authority is also the fee payer, the compiled message marks that key
+/// writable+signer, and the runtime only requires it to be a signer. The
+/// `authority == sender` identity is enforced by the caller.
+pub fn decode_advance_nonce_account(
+    message: &Message,
+    instruction_index: usize,
+) -> Result<DecodedAdvanceNonce, InspectError> {
+    let (program_id, accounts, data) = decode_instruction(message, instruction_index)?;
+    if program_id != SYSTEM_PROGRAM_ID {
+        return Err(InspectError::UnexpectedProgram);
+    }
+    if data != ADVANCE_NONCE_ACCOUNT_DATA {
+        return Err(InspectError::InvalidInstructionData);
+    }
+    if accounts.len() != 3 {
+        return Err(InspectError::InvalidAccountCount);
+    }
+    require_privileges(&accounts, 0, false, true)?; // nonce account: writable, non-signer
+    require_privileges(&accounts, 1, false, false)?; // recent-blockhashes sysvar: readonly, non-signer
+    if accounts[1].pubkey != RECENT_BLOCKHASHES_SYSVAR_ID {
+        return Err(InspectError::InvalidAccountAddress(1));
+    }
+    if !accounts[2].is_signer {
+        return Err(InspectError::InvalidAccountPrivileges(2)); // nonce authority: signer
+    }
+    Ok(DecodedAdvanceNonce {
+        nonce_account: accounts[0].pubkey,
+        nonce_authority: accounts[2].pubkey,
+    })
 }
 
 pub fn decode_ata_create_idempotent(

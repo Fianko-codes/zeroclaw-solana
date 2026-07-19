@@ -29,6 +29,11 @@ pub struct RpcAccount {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SimulationResult {
     pub error: Option<String>,
+    /// True when the RPC reported a `replacementBlockhash`, i.e. it replaced the
+    /// transaction's blockhash. Durable-nonce callers request no replacement and
+    /// must reject a transaction whose blockhash was replaced anyway, since that
+    /// would simulate a different lifetime mechanism than the returned bytes.
+    pub replaced_blockhash: bool,
 }
 
 impl SimulationResult {
@@ -133,6 +138,26 @@ pub fn simulate_transaction_request(id: u64, transaction_base64: &str) -> String
     .to_string()
 }
 
+/// Durable-nonce simulation request. The stored nonce value must remain in the
+/// message `recent_blockhash` field, so `replaceRecentBlockhash` MUST be false;
+/// setting it true would swap in a fresh cluster blockhash and bypass the
+/// durable-nonce validation path (the two options are mutually exclusive with
+/// `sigVerify`, which stays false for an unsigned transaction).
+pub fn simulate_durable_transaction_request(id: u64, transaction_base64: &str) -> String {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "simulateTransaction",
+        "params": [transaction_base64, {
+            "commitment": "confirmed",
+            "encoding": "base64",
+            "replaceRecentBlockhash": false,
+            "sigVerify": false
+        }]
+    })
+    .to_string()
+}
+
 pub fn parse_latest_blockhash_response(
     body: &str,
     expected_id: u64,
@@ -214,8 +239,12 @@ pub fn parse_simulation_response(
         .and_then(Value::as_object)
         .ok_or(RpcError::InvalidSimulationResult)?;
     let error = value.get("err").ok_or(RpcError::InvalidSimulationResult)?;
+    let replaced_blockhash = value
+        .get("replacementBlockhash")
+        .is_some_and(|value| !value.is_null());
     Ok(SimulationResult {
         error: (!error.is_null()).then(|| simulation_reason(error)),
+        replaced_blockhash,
     })
 }
 

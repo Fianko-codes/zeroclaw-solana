@@ -191,3 +191,9 @@ pub const COMPUTE_BUDGET_PROGRAM_ID: Pubkey = Pubkey::new([
     3, 6, 70, 111, 229, 33, 23, 50, 255, 236, 173, 186, 114, 195, 155, 231, 188, 140, 229, 187,
     197, 247, 18, 107, 44, 67, 155, 58, 64, 0, 0, 0,
 ]);
+/// `SysvarRecentB1ockHashes11111111111111111111`. Deprecated for on-chain reads
+/// but still a required account of the `AdvanceNonceAccount` instruction.
+pub const RECENT_BLOCKHASHES_SYSVAR_ID: Pubkey = Pubkey::new([
+    6, 167, 213, 23, 25, 44, 86, 142, 224, 138, 132, 95, 115, 210, 151, 136, 207, 3, 92, 49, 69,
+    178, 26, 179, 68, 216, 6, 46, 169, 64, 0, 0,
+]);
