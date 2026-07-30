@@ -6,7 +6,11 @@ rust-version = "1.81"
 license = "MIT"
 description = "Small, auditable Solana primitives for ZeroClaw WASM tool plugins"
 repository = "https://github.com/Fianko-codes/zeroclaw-solana"
-publish = false
+documentation = "https://docs.rs/nanosol"
+readme = "README.md"
+keywords = ["solana", "wasm", "wasip2", "spl-token", "zeroclaw"]
+categories = ["cryptography::cryptocurrencies", "wasm", "encoding"]
+exclude = ["target/"]
 
 [lib]
 crate-type = ["rlib"]

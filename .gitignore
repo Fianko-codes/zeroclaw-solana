@@ -1,3 +1,10 @@
 # Local host checkout used only for source inspection during spike work.
 zeroclaw/
 nanosol/target/
+
+# Private strategy notes — never commit.
+plan-win.md
+pr-body-new.md
+w5-upstream-issue-cdn.md
+w5-pr-comment.md
+w2-flip-nanosol-pin.sh
