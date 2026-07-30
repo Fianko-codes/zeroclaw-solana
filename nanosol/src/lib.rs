@@ -19,5 +19,6 @@ pub mod pubkey;
 pub mod reference;
 pub mod rpc;
 pub mod shape;
+pub mod signature;
 
 pub use error::Error;

@@ -38,11 +38,62 @@ pub struct DecodedTransferChecked {
     pub reference: Option<Pubkey>,
 }
 
+/// SPL Token / Token-2022 `Transfer` instruction discriminant.
+pub const TOKEN_TRANSFER_DISCRIMINANT: u8 = 3;
+/// SPL Token / Token-2022 `TransferChecked` instruction discriminant.
+pub const TOKEN_TRANSFER_CHECKED_DISCRIMINANT: u8 = 12;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TokenTransferKind {
+    /// `Transfer`: carries no mint and no decimals, so a caller must obtain both
+    /// from the token accounts or from chain state.
+    Transfer,
+    /// `TransferChecked`: names the mint and asserts its decimals.
+    TransferChecked,
+}
+
+/// A decoded SPL Token / Token-2022 transfer, in either encoding a wallet may
+/// have used to settle a Solana Pay request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecodedTokenTransfer {
+    pub kind: TokenTransferKind,
+    pub source: Pubkey,
+    /// Present only for `TransferChecked`.
+    pub mint: Option<Pubkey>,
+    pub destination: Pubkey,
+    /// The authority account with the privileges the message actually granted
+    /// it. A single owner signs; a multisig authority is a non-signer whose
+    /// participating signers follow in `extra_accounts`.
+    pub authority: AccountMeta,
+    pub amount: u64,
+    /// Present only for `TransferChecked`.
+    pub decimals: Option<u8>,
+    pub token_program: TokenProgram,
+    /// Accounts after the fixed prefix: Solana Pay reference keys and, for a
+    /// multisig authority, the participating signers.
+    pub extra_accounts: Vec<AccountMeta>,
+}
+
+impl DecodedTokenTransfer {
+    /// True when `key` is attached to *this instruction* as a read-only
+    /// non-signer, which is exactly how Solana Pay attaches a reference.
+    ///
+    /// A key that appears elsewhere in the transaction, or that appears here
+    /// with any privilege, does not satisfy this test: a payment must be bound
+    /// to the reference by the transfer instruction itself.
+    pub fn carries_reference(&self, key: &Pubkey) -> bool {
+        self.extra_accounts
+            .iter()
+            .any(|account| account.pubkey == *key && !account.is_signer && !account.is_writable)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InspectError {
     Message(MessageError),
     WrongMessageVersion,
     NonzeroSignature,
+    MissingSignature,
     InstructionOutOfBounds(usize),
     ProgramIndexOutOfBounds,
     ProgramAccountPrivileges,
@@ -64,6 +115,9 @@ impl fmt::Display for InspectError {
             }
             Self::NonzeroSignature => {
                 formatter.write_str("transaction contains a nonzero signature")
+            }
+            Self::MissingSignature => {
+                formatter.write_str("settled transaction contains an all-zero signature slot")
             }
             Self::InstructionOutOfBounds(index) => {
                 write!(formatter, "transaction has no instruction at index {index}")
@@ -118,6 +172,113 @@ pub fn decode_unsigned_v0_transaction(bytes: &[u8]) -> Result<Transaction, Inspe
         return Err(InspectError::NonzeroSignature);
     }
     Ok(transaction)
+}
+
+/// Decode a settled transaction of either supported message version.
+///
+/// [`decode_unsigned_v0_transaction`] requires a v0 message with all-zero
+/// signature slots, which a landed transaction never has: a wallet may submit a
+/// legacy or a v0 message, and every required signature is filled in. Messages
+/// carrying address-table lookups are still refused by the message decoder, so
+/// every account index in the decoded message indexes the static key list.
+pub fn decode_signed_transaction(bytes: &[u8]) -> Result<Transaction, InspectError> {
+    let transaction = Transaction::deserialize(bytes)?;
+    if transaction
+        .signatures
+        .iter()
+        .any(|signature| signature.iter().all(|byte| *byte == 0))
+    {
+        return Err(InspectError::MissingSignature);
+    }
+    Ok(transaction)
+}
+
+/// Decode every SPL Token / Token-2022 transfer in a message.
+///
+/// Any instruction addressed to a token program whose discriminant is
+/// `Transfer` or `TransferChecked` must decode strictly; a malformed one is an
+/// error rather than a skipped instruction, so a hostile transaction cannot
+/// hide a transfer behind a decoder that gives up. Instructions belonging to
+/// other programs, and other token instructions, are ignored.
+///
+/// Inner (CPI) instructions are not visible in message bytes and are therefore
+/// not decoded. Callers reconcile net effect through the transaction's token
+/// balance deltas instead.
+pub fn find_token_transfers(
+    message: &Message,
+) -> Result<Vec<(usize, DecodedTokenTransfer)>, InspectError> {
+    let mut transfers = Vec::new();
+    for (index, instruction) in message.instructions.iter().enumerate() {
+        let program_id = message
+            .account_keys
+            .get(usize::from(instruction.program_id_index))
+            .copied()
+            .ok_or(InspectError::ProgramIndexOutOfBounds)?;
+        if TokenProgram::identify(&program_id).is_err() {
+            continue;
+        }
+        if matches!(
+            instruction.data.first().copied(),
+            Some(TOKEN_TRANSFER_DISCRIMINANT | TOKEN_TRANSFER_CHECKED_DISCRIMINANT)
+        ) {
+            transfers.push((index, decode_token_transfer(message, index)?));
+        }
+    }
+    Ok(transfers)
+}
+
+/// Semantically decode one SPL Token / Token-2022 `Transfer` or
+/// `TransferChecked` instruction, including any accounts appended after the
+/// fixed prefix.
+///
+/// Unlike [`decode_transfer_checked`], which verifies bytes this workspace
+/// built, this decoder accepts the shapes third-party wallets actually produce:
+/// either discriminant, a multisig authority, and any number of trailing
+/// reference accounts.
+pub fn decode_token_transfer(
+    message: &Message,
+    instruction_index: usize,
+) -> Result<DecodedTokenTransfer, InspectError> {
+    let (program_id, accounts, data) = decode_instruction(message, instruction_index)?;
+    let token_program =
+        TokenProgram::identify(&program_id).map_err(|_| InspectError::UnsupportedTokenProgram)?;
+    let (kind, fixed_accounts) = match (data.first().copied(), data.len()) {
+        (Some(TOKEN_TRANSFER_DISCRIMINANT), 9) => (TokenTransferKind::Transfer, 3),
+        (Some(TOKEN_TRANSFER_CHECKED_DISCRIMINANT), 10) => (TokenTransferKind::TransferChecked, 4),
+        _ => return Err(InspectError::InvalidInstructionData),
+    };
+    if accounts.len() < fixed_accounts {
+        return Err(InspectError::InvalidAccountCount);
+    }
+
+    // Token accounts and the mint are never signers; source and destination are
+    // always written. The authority is left to the caller: a single owner signs,
+    // while a multisig authority is a read-only account followed by its signers.
+    require_privileges(&accounts, 0, false, true)?;
+    let (mint, destination_index) = match kind {
+        TokenTransferKind::Transfer => (None, 1),
+        TokenTransferKind::TransferChecked => {
+            require_privileges(&accounts, 1, false, false)?;
+            (Some(accounts[1].pubkey), 2)
+        }
+    };
+    require_privileges(&accounts, destination_index, false, true)?;
+    let amount = u64::from_le_bytes(
+        data[1..9]
+            .try_into()
+            .map_err(|_| InspectError::InvalidInstructionData)?,
+    );
+    Ok(DecodedTokenTransfer {
+        kind,
+        source: accounts[0].pubkey,
+        mint,
+        destination: accounts[destination_index].pubkey,
+        authority: accounts[fixed_accounts - 1],
+        amount,
+        decimals: matches!(kind, TokenTransferKind::TransferChecked).then(|| data[9]),
+        token_program,
+        extra_accounts: accounts[fixed_accounts..].to_vec(),
+    })
 }
 
 /// Semantically decode a System Program `AdvanceNonceAccount` instruction and
