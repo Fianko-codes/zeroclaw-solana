@@ -1,0 +1,40 @@
+# REDACTED TEMPLATE — placeholders are public values only.
+# Never add a private key, seed phrase, Telegram token, API credential, or
+# credential-bearing RPC URL. Keep production config out of source control.
+
+[[plugins.entries]]
+name = "solana-pay-request"
+
+[plugins.entries.config]
+mint_aliases = "DEMO=<DEVNET_MINT_PUBKEY>"
+mint_decimals = "DEMO=<MINT_DECIMALS>"
+default_label = "ZeroClaw demo merchant"
+allowed_recipients = "<MERCHANT_WALLET_PUBKEY>"
+
+[[plugins.entries]]
+name = "spl-transfer-build"
+
+[plugins.entries.config]
+# HTTPS, public or independently authenticated outside the recorded terminal.
+rpc_url = "https://api.devnet.solana.com"
+sender_pubkey = "<DISPOSABLE_SENDER_PUBKEY>"
+mint_allowlist = "<DEVNET_MINT_PUBKEY>"
+max_amounts = "<DEVNET_MINT_PUBKEY>=10"
+mint_aliases = "DEMO=<DEVNET_MINT_PUBKEY>"
+recipient_allowlist = "<DISPOSABLE_RECIPIENT_PUBKEY>"
+allow_off_curve_recipients = "false"
+allow_token_2022 = "false"
+# Omit durable-nonce settings for the short devnet demo.
+
+[[plugins.entries]]
+name = "solana-pay-confirm"
+
+[plugins.entries.config]
+rpc_url = "https://api.devnet.solana.com"
+allowed_recipients = "<MERCHANT_WALLET_PUBKEY>"
+mint_allowlist = "<DEVNET_MINT_PUBKEY>"
+mint_aliases = "DEMO=<DEVNET_MINT_PUBKEY>"
+min_commitment = "finalized"
+max_signatures_scanned = "10"
+allow_token_2022 = "false"
+# For production, set rpc_url_secondary to an independently operated endpoint.
